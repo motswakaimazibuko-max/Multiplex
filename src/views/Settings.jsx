@@ -118,6 +118,7 @@ export default function SettingsModal({ settings, onClose, onSave, practitioners
   const [editingPractitioner, setEditingPractitioner] = useState(null);
   const [addingPractitioner, setAddingPractitioner] = useState(false);
   const [invitingTeam, setInvitingTeam] = useState(false);
+  const [inviteEmailError, setInviteEmailError] = useState('');
 
   const submit = async () => {
     setSaving(true);
@@ -175,7 +176,22 @@ export default function SettingsModal({ settings, onClose, onSave, practitioners
               ))}
             </div>
           )}
-          {invitingTeam && <InviteForm onInvite={async (m) => { await onInviteTeamMember(m); setInvitingTeam(false); }} onCancel={() => setInvitingTeam(false)} />}
+          {inviteEmailError && !invitingTeam && (
+            <div style={{ color: COLORS.rust, fontSize: 12, marginBottom: 6 }}>
+              Teammate added, but the invite email failed to send: {inviteEmailError}. They can still sign in manually with the email you entered — see README for setting up RESEND_API_KEY / APP_URL on the send-team-invite function.
+            </div>
+          )}
+          {invitingTeam && (
+            <InviteForm
+              onInvite={async (m) => {
+                setInviteEmailError('');
+                const saved = await onInviteTeamMember(m);
+                if (saved?.emailError) setInviteEmailError(saved.emailError);
+                setInvitingTeam(false);
+              }}
+              onCancel={() => setInvitingTeam(false)}
+            />
+          )}
           {(!team || team.length === 0) && !invitingTeam && (
             <div style={{ fontSize: 12.5, color: COLORS.slate, fontStyle: 'italic' }}>Just you so far. Invite your GP and biokineticist to give them their own login.</div>
           )}
