@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Calendar, FileText, Settings as SettingsIcon, Users, LogOut } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import Auth from './Auth';
-import { COLORS, waLink, reminderText } from './theme';
+import { COLORS } from './theme';
 import * as db from './lib/db';
 import { deleteCalendarEvent, isGoogleCalendarConfigured, requestGoogleAccessToken, upsertCalendarEvent } from './lib/googleCalendar';
 
@@ -34,7 +34,7 @@ export default function App() {
       .catch((e) => setCtxError(e.message || 'Could not load your practice.'));
   }, [session]);
 
-  if (session === undefined) {
+  if (session === undefined || (session && practiceCtx === undefined && !ctxError)) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: COLORS.paper, fontFamily: 'Inter, sans-serif', color: COLORS.slate }}>
         Loading…
@@ -53,16 +53,6 @@ export default function App() {
           </div>
           <button onClick={() => supabase.auth.signOut()} style={{ background: 'none', border: 'none', color: COLORS.teal, cursor: 'pointer', fontSize: 13, textDecoration: 'underline' }}>Sign out</button>
         </div>
-      </div>
-    );
-  }
-  // practiceCtx can still be null/undefined here for a render or two after
-  // `session` flips truthy — the effect that resolves it hasn't run yet.
-  // Keep showing the loading state rather than reading off of it.
-  if (!practiceCtx) {
-    return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: COLORS.paper, fontFamily: 'Inter, sans-serif', color: COLORS.slate }}>
-        Loading…
       </div>
     );
   }
@@ -173,6 +163,24 @@ function PracticeApp({ userId, authUserId, role }) {
     if (member.role === 'gp' || member.role === 'biokineticist') {
       await savePractitioner({ name: member.name, discipline: member.role, email: member.email, registration_number: '', phone: '', active: true });
     }
+    // Email them so they actually know to sign in — creating the DB row
+    // alone doesn't notify anyone. Non-fatal if this fails (e.g. Resend not
+    // configured yet): the invite row still exists and they can be told
+    // manually, but we surface the error so the manager knows to check it.
+    try {
+      const { error: emailError } = await supabase.functions.invoke('send-team-invite', {
+        body: {
+          email: member.email,
+          name: member.name,
+          role: member.role,
+          practiceName: settings?.practice_name,
+          inviterName: settings?.practitioner_name,
+        },
+      });
+      if (emailError) throw emailError;
+    } catch (e) {
+      saved.emailError = e.message || 'Could not send invite email';
+    }
     return saved;
   };
   const removeTeamMember = async (id) => {
@@ -181,7 +189,7 @@ function PracticeApp({ userId, authUserId, role }) {
   };
 
   // ---- appointments ----
-  const saveAppt = async (appt, isNew) => {
+  const saveAppt = async (appt) => {
     const client = clients.find((c) => c.id === appt.client_id);
     const clientName = client?.name || '';
     const practitioner = practitioners.find((p) => p.id === appt.practitioner_id) || null;
@@ -193,25 +201,8 @@ function PracticeApp({ userId, authUserId, role }) {
       await deleteCalendarEvent(googleToken, appt.google_event_id);
       payload = { ...appt, google_event_id: null };
     }
-    const saved = await db.upsertAppointment(userId, payload);
+    await db.upsertAppointment(userId, payload);
     await refreshAll();
-
-    // Only notify on a brand-new, actually-scheduled booking — not on edits
-    // or cancellations, and not on every re-save.
-    if (isNew && payload.status === 'scheduled') {
-      // Instant email confirmation to patient + clinician (fire-and-forget;
-      // failures are logged inside sendBookingConfirmation, not thrown).
-      db.sendBookingConfirmation(saved.id);
-
-      // No WhatsApp Business API is wired up, so the closest we can do to an
-      // "instant" WhatsApp notification is pre-fill the message and open it
-      // for the practitioner to tap send.
-      if (client?.phone) {
-        const text = reminderText(clientName, payload, settings);
-        const link = waLink(client.phone, text);
-        if (link) window.open(link, '_blank', 'noopener,noreferrer');
-      }
-    }
   };
   const removeAppt = async (id) => {
     const appt = appointments.find((a) => a.id === id);
@@ -343,7 +334,7 @@ function PracticeApp({ userId, authUserId, role }) {
           clients={clients}
           practitioners={practitioners}
           onClose={() => setShowApptForm(false)}
-          onSave={async (a) => { await saveAppt(a, !editingAppt); setShowApptForm(false); }}
+          onSave={async (a) => { await saveAppt(a); setShowApptForm(false); }}
           onQuickAddClient={saveClient}
         />
       )}
