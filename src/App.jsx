@@ -34,7 +34,7 @@ export default function App() {
       .catch((e) => setCtxError(e.message || 'Could not load your practice.'));
   }, [session]);
 
-  if (session === undefined || (session && practiceCtx === undefined && !ctxError)) {
+ if (session === undefined || (session && !practiceCtx && !ctxError)) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: COLORS.paper, fontFamily: 'Inter, sans-serif', color: COLORS.slate }}>
         Loading…
