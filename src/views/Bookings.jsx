@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { Activity, Calendar, Check, Clock, FileText, Mail, Pencil, Phone, Plus, Stethoscope, Trash2 } from 'lucide-react';
-import { COLORS, Badge, Btn, EmptyState, Field, Modal, SectionHeader, SpineDivider, clinicianReminderText, fmtDateLabel, iconBtnStyle, inputStyle, mailLink, reminderText, todayISO, uid, waLink } from '../theme';
+import { Activity, Calendar, Check, Clock, FileText, Loader2, Mail, Pencil, Phone, Plus, Stethoscope, Trash2 } from 'lucide-react';
+import { COLORS, Badge, Btn, EmptyState, Field, Modal, SectionHeader, SpineDivider, clinicianReminderText, fmtDateLabel, iconBtnStyle, inputStyle, reminderText, todayISO, uid, waLink } from '../theme';
+import { supabase } from '../supabaseClient';
 
 export const SESSION_TYPES_BY_DISCIPLINE = {
   biokineticist: [
@@ -26,6 +27,25 @@ const DisciplineIcon = { gp: Stethoscope, biokineticist: Activity };
 
 export default function BookingsView({ appointments, clients, settings, practitioners, onNew, onEdit, onDelete, onStatusChange, onInvoice }) {
   const [filterDiscipline, setFilterDiscipline] = useState('all');
+  // Tracks in-flight / just-finished one-tap sends, keyed by `${apptId}-${kind}`
+  // so the "patient" and "clinician" buttons on the same booking don't clobber
+  // each other's status.
+  const [sendStatus, setSendStatus] = useState({}); // key -> 'sending' | 'sent'
+  const [sendError, setSendError] = useState({}); // key -> message
+
+  const handleSend = async (key, { to, subject, text }) => {
+    setSendStatus((prev) => ({ ...prev, [key]: 'sending' }));
+    setSendError((prev) => ({ ...prev, [key]: '' }));
+    try {
+      const { error } = await supabase.functions.invoke('send-email', { body: { to, subject, text } });
+      if (error) throw error;
+      setSendStatus((prev) => ({ ...prev, [key]: 'sent' }));
+      setTimeout(() => setSendStatus((prev) => ({ ...prev, [key]: undefined })), 2500);
+    } catch (e) {
+      setSendStatus((prev) => ({ ...prev, [key]: undefined }));
+      setSendError((prev) => ({ ...prev, [key]: e.message || 'Could not send email' }));
+    }
+  };
 
   const filtered = useMemo(() => {
     if (filterDiscipline === 'all') return appointments;
@@ -78,11 +98,14 @@ export default function BookingsView({ appointments, clients, settings, practiti
             const practitioner = practitioners?.find((p) => p.id === a.practitioner_id);
             const text = client ? reminderText(client.name, a, settings) : '';
             const wa = client ? waLink(client.phone, text) : null;
-            const mail = client ? mailLink(client.email, `Appointment reminder — ${fmtDateLabel(a.date)}`, text) : null;
+            const patientSubject = `Appointment reminder — ${fmtDateLabel(a.date)}`;
+            const canEmailPatient = Boolean(client?.email);
             const clinicianText = client ? clinicianReminderText(client.name, a) : '';
             const clinicianEmail = practitioner?.email || settings?.email;
-            const clinicianMail = clinicianEmail ? mailLink(clinicianEmail, `Upcoming: ${client?.name || 'appointment'} — ${fmtDateLabel(a.date)}`, clinicianText) : null;
+            const clinicianSubject = `Upcoming: ${client?.name || 'appointment'} — ${fmtDateLabel(a.date)}`;
             const DIcon = practitioner ? DisciplineIcon[practitioner.discipline] : null;
+            const patientKey = `${a.id}-patient`;
+            const clinicianKey = `${a.id}-clinician`;
             return (
               <div key={a.id} style={{ background: COLORS.paperRaised, border: `1px solid ${COLORS.line}`, borderRadius: 14, padding: 14, marginBottom: 10 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -107,10 +130,34 @@ export default function BookingsView({ appointments, clients, settings, practiti
                   )}
                   <button onClick={() => onInvoice(a)} style={iconBtnStyle}><FileText size={14} /> Invoice</button>
                   {wa && <a href={wa} target="_blank" rel="noopener noreferrer" style={{ ...iconBtnStyle, color: COLORS.tealDeep }}><Phone size={14} /> Remind patient (WhatsApp)</a>}
-                  {mail && <a href={mail} style={{ ...iconBtnStyle, color: COLORS.tealDeep }}><Mail size={14} /> Remind patient (email)</a>}
-                  {clinicianMail && <a href={clinicianMail} style={{ ...iconBtnStyle, color: COLORS.amber }}><Mail size={14} /> Notify practitioner</a>}
+                  {canEmailPatient && (
+                    <button
+                      onClick={() => handleSend(patientKey, { to: client.email, subject: patientSubject, text })}
+                      disabled={sendStatus[patientKey] === 'sending'}
+                      style={{ ...iconBtnStyle, color: COLORS.tealDeep }}
+                    >
+                      {sendStatus[patientKey] === 'sending' ? <Loader2 size={14} /> : <Mail size={14} />}
+                      {sendStatus[patientKey] === 'sending' ? 'Sending…' : sendStatus[patientKey] === 'sent' ? 'Sent ✓' : 'Remind patient (email)'}
+                    </button>
+                  )}
+                  {clinicianEmail && (
+                    <button
+                      onClick={() => handleSend(clinicianKey, { to: clinicianEmail, subject: clinicianSubject, text: clinicianText })}
+                      disabled={sendStatus[clinicianKey] === 'sending'}
+                      style={{ ...iconBtnStyle, color: COLORS.amber }}
+                    >
+                      {sendStatus[clinicianKey] === 'sending' ? <Loader2 size={14} /> : <Mail size={14} />}
+                      {sendStatus[clinicianKey] === 'sending' ? 'Sending…' : sendStatus[clinicianKey] === 'sent' ? 'Sent ✓' : 'Notify practitioner'}
+                    </button>
+                  )}
                   <button onClick={() => onDelete(a.id)} style={{ ...iconBtnStyle, color: COLORS.rust }}><Trash2 size={14} /> Remove</button>
                 </div>
+                {(sendError[patientKey] || sendError[clinicianKey]) && (
+                  <div style={{ fontSize: 12, color: COLORS.rust, marginTop: 6 }}>
+                    {sendError[patientKey] && <div>Reminder to patient failed: {sendError[patientKey]}</div>}
+                    {sendError[clinicianKey] && <div>Notify practitioner failed: {sendError[clinicianKey]}</div>}
+                  </div>
+                )}
               </div>
             );
           })}
