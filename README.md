@@ -82,6 +82,20 @@ Every scheduled booking now automatically queues two reminder emails: one to the
 
 Manual **WhatsApp / email reminder** buttons are still on each booking too, for a one-tap "notify right now" option alongside the automatic scheduled ones.
 
+## Nightly practitioner digest (tomorrow's bookings)
+
+Each practitioner with a connected email also gets one extra email around **18:30 the evening before**, listing every patient booked for the next day, in order — a quick end-of-day overview rather than the 2-hour-before ping above. It reuses the same Resend account as the reminders, so if you've already done the steps above, only the cron scheduling is new:
+
+1. **Run the extra migrations.** In Supabase SQL Editor, run `supabase/migrations/0010_daily_digest.sql` (adds a small log table so the digest never double-sends), then hold off on `0011_daily_digest_cron.sql` until step 3.
+2. **Deploy the Edge Function:**
+   ```bash
+   supabase functions deploy send-daily-digest --no-verify-jwt
+   ```
+   It reads the same `RESEND_API_KEY` and `REMINDER_FROM_EMAIL` secrets you already set for reminders — nothing extra to configure there.
+3. **Schedule it.** Open `supabase/migrations/0011_daily_digest_cron.sql`, replace `YOUR-PROJECT-REF` and `YOUR-SERVICE-ROLE-KEY`, then run it in SQL Editor. It fires once a day at 16:30 UTC (18:30 SAST — South Africa has no DST, so this never needs adjusting).
+
+Only bookings with a practitioner assigned are included (same as Google Calendar sync) — an unassigned booking has nowhere to be emailed to. If a practitioner has no bookings the next day, they simply get no email that night.
+
 ## Editable invoices
 
 Every invoice can be edited after creation — line items, quantities, rates, and the **VAT rate itself** (not fixed at 15%, in case you need a zero-rated or custom-rate line). Open an invoice and tap **Edit invoice**.
