@@ -14,7 +14,7 @@ A booking + invoicing web app for a solo biokinetics practice: React 18 + Vite, 
 ## 1. Create the Supabase project
 
 1. Go to [supabase.com](https://supabase.com) → New project.
-2. In the SQL Editor, paste and run each migration in `supabase/migrations/`, **in order** — `0001_init.sql`, `0002_features.sql`, `0003_cron_setup.sql` (edit its two placeholders first — project ref and service role key — or skip it until you've deployed the reminder Edge Function below), `0004_practitioners.sql`, `0005_multi_user_practice.sql`.
+2. In the SQL Editor, paste and run each migration in `supabase/migrations/`, **in order** — `0001_init.sql`, `0002_features.sql`, `0003_cron_setup.sql` (edit its two placeholders first — project ref and service role key — or skip it until you've deployed the reminder Edge Function below), `0004_practitioners.sql`, `0005_multi_user_practice.sql`, and (if you're setting up Google Calendar sync) `0008_google_oauth.sql` then `0009_google_calendar_per_practitioner.sql`.
 3. In **Authentication → Providers**, make sure **Email** is enabled. In **Authentication → URL Configuration**, add your local dev URL (`http://localhost:5173`) and your future Vercel URL to the redirect allow-list.
 4. In **Project Settings → API**, copy the **Project URL** and **anon public key**.
 
@@ -96,27 +96,30 @@ One practice, up to a few separate logins, all seeing the same data:
 4. Inviting someone as GP or Biokineticist also adds a matching entry under **Practitioners**, so they show up in the booking form's practitioner dropdown right away.
 5. Only the Practice Manager sees the Team access section and can invite or remove teammates. All three roles can create bookings, clients, and invoices.
 
-Each person can still independently connect **their own** Google Calendar (Settings → Connect Google Calendar) — that connection is per-browser, not shared, so the GP's bookings can sync to the GP's calendar and the biokineticist's to theirs.
+Each practitioner can independently connect **their own** Google account (Settings → next to their name → Connect) — a practice can have several different Google accounts connected at once, one per practitioner, and each practitioner's bookings sync only to their own calendar. See **Google Calendar sync** below.
 
 ## Google Calendar sync
 
-Scheduled bookings can sync to your Google Calendar. This uses a client-side Google OAuth flow — no backend secret required, but you do need your own OAuth Client ID:
+Scheduled bookings can sync to Google Calendar — and since each practitioner connects their own Google account (Settings → Practitioners → next to their name), a GP and a biokineticist sharing one practice can each have bookings land on their own calendar, under their own email. This uses a server-side OAuth flow, so the sync keeps working even when nobody has the app open. You need your own OAuth Client ID/Secret:
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/) → create a project (or use an existing one).
 2. **APIs & Services → Library** → enable the **Google Calendar API**.
-3. **APIs & Services → OAuth consent screen** → set it up as **External**, add your own email as a test user (or publish it later once verified).
+3. **APIs & Services → OAuth consent screen** → set it up as **External**, add your own email (and any other practitioner's) as a test user (or publish it later once verified).
 4. **APIs & Services → Credentials → Create Credentials → OAuth Client ID** → Application type: **Web application**.
-5. Under **Authorized JavaScript origins**, add:
-   - `http://localhost:5173` (for local dev)
-   - your Vercel URL, e.g. `https://your-app.vercel.app`
-6. Copy the generated **Client ID** into `.env` as `VITE_GOOGLE_CLIENT_ID`, and into Vercel's environment variables for the deployed site.
+5. Under **Authorized redirect URIs**, add your deployed callback function URL:
+   `https://YOUR-PROJECT-REF.supabase.co/functions/v1/google-oauth-callback`
+6. Deploy the four Google edge functions and set their secrets:
+   ```bash
+   supabase functions deploy google-oauth-start google-oauth-callback google-calendar-push google-calendar-disconnect google-calendar-pull
+   supabase secrets set GOOGLE_CLIENT_ID=your_client_id
+   supabase secrets set GOOGLE_CLIENT_SECRET=your_client_secret
+   supabase secrets set GOOGLE_REDIRECT_URI=https://YOUR-PROJECT-REF.supabase.co/functions/v1/google-oauth-callback
+   supabase secrets set APP_URL=https://your-app.vercel.app
+   ```
+7. Run migration `0009_google_calendar_per_practitioner.sql` (after `0008_google_oauth.sql`) so each connection is keyed by practitioner instead of shared practice-wide.
 
-In the app, go to Settings (gear icon) → **Connect Google Calendar**, and approve access. The connection lasts about an hour per session — if bookings stop syncing, just reconnect. Only bookings with status "scheduled" are synced; marking one completed/cancelled removes it from your calendar (and sends the patient a cancellation email).
+In the app, go to Settings (gear icon) → **Practitioners**, and next to a practitioner's name click **Connect** — sign in with *that practitioner's* Google account. Repeat for each other practitioner with their own account; nothing is shared between them. If a connection stops syncing, click **Reconnect** on that practitioner's row. Only bookings with status "scheduled" are synced; marking one completed/cancelled removes it from that practitioner's calendar (and sends the patient a cancellation email).
 
-**Notifying the clinician and the patient:** every synced event is created with `sendUpdates=all`, so Google itself emails a calendar invite to:
-- the **patient**, if the client record has an email address saved (Clients → edit client), and
-- the **practice email** in Settings, if you've filled that in.
+**Notifying the patient:** every synced event is created with `sendUpdates=all`, so Google itself emails a calendar invite to the **patient**, if the client record has an email address saved (Clients → edit client) — the event lives on the practitioner's own calendar either way. Patients get a reminder email 1 day before and a popup reminder 1 hour before. No email address on the client record means no invite is sent to the patient — the event still syncs to the practitioner's calendar regardless.
 
-Both get a reminder email 1 day before and a popup reminder 1 hour before (via Google Calendar/the Google Calendar mobile app, if either of you has it). No email address on the client record means no invite is sent to the patient — the event still syncs to your own calendar either way.
-
-This uses Google's own invite emails, not a custom email service, so there's nothing extra to configure beyond the OAuth Client ID above — just make sure your clients' email addresses are filled in.
+This uses Google's own invite emails, not a custom email service, so there's nothing extra to configure beyond the OAuth credentials above — just make sure your clients' email addresses are filled in.
