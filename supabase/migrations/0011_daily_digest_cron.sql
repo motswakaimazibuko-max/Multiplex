@@ -12,9 +12,9 @@ select cron.schedule(
   '30 16 * * *',  -- 16:30 UTC = 18:30 SAST, every day
   $$
   select net.http_post(
-    url := 'https://YOUR-PROJECT-REF.supabase.co/functions/v1/send-daily-digest',
+    url := 'https://cshavbrhsbaxyqjdgfsl.supabase.co/functions/v1/send-daily-digest',
     headers := jsonb_build_object(
-      'Authorization', 'Bearer YOUR-SERVICE-ROLE-KEY',
+      'Authorization', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNzaGF2YnJoc2JheHlxamRnZnNsIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NjUzNzE0OSwiZXhwIjoyMTAyMTEzMTQ5fQ.m7BNwWW69Pev3pVBYRsuNrCTIP_ieO4-vFL5s8oFml0',
       'Content-Type', 'application/json'
     ),
     body := '{}'::jsonb
